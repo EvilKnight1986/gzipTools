@@ -116,6 +116,16 @@ BOOL CgzipToolsDlg::OnInitDialog()
 	SetIcon(m_hIcon, FALSE);		// 设置小图标
 
 	// TODO: 在此添加额外的初始化代码
+        // 初始化状态栏
+        m_StatusBar.Create(WS_CHILD | WS_VISIBLE, CRect(0,0,0,0), this, 101) ;
+        int arWidth[2] = {260,-1} ;
+        m_StatusBar.SetParts(2, arWidth) ;
+        wchar_t szKernelName[MAX_PATH] = {0} ;
+
+        m_StatusBar.SetText(TEXT("Copyright(c)2015 EvilKnight 所有"),0,0) ;
+
+        GetDlgItem(BTN_COMPRESS)->EnableWindow(FALSE) ;
+        GetDlgItem(BTN_UNCOMPRESS)->EnableWindow(FALSE) ;
 
 	return TRUE;  // 除非将焦点设置到控件，否则返回 TRUE
 }
@@ -210,6 +220,8 @@ void CgzipToolsDlg::OnBnClickedSrcbrow()
         {
                 m_strSrcPath = dlg.GetPathName();
                 UpdateData(FALSE) ;
+                GetDlgItem(BTN_COMPRESS)->EnableWindow(TRUE) ;
+                GetDlgItem(BTN_UNCOMPRESS)->EnableWindow(TRUE) ;
         }
 }
 
@@ -234,14 +246,28 @@ void CgzipToolsDlg::OnBnClickedDstbrow()
 void CgzipToolsDlg::OnBnClickedCompress()
 {
         // TODO: 在此添加控件通知处理程序代码
-        UpdateData(TRUE) ;
+        gzipStream(false) ;
 }
 
 void CgzipToolsDlg::OnBnClickedUncompress()
 {
         // TODO: 在此添加控件通知处理程序代码
+        gzipStream(true) ;
+}
+
+/*******************************************************************************
+*
+*   函 数 名 : gzipStream
+*  功能描述 : gzip压缩与解压功能,数据流形式
+*  参数列表 : bMode       --  工作模式
+*  说      明 :  bMode为false时为压缩工作模式，bMode为true为解压工作模式
+*  返回结果 :  如果操作成功，返回0, 失败返回-1(解压或压缩结果为返回值)
+*
+*******************************************************************************/
+int CgzipToolsDlg::gzipStream(bool bMode)
+{
         UpdateData(TRUE) ;
-        
+
         HANDLE hSrcFile = INVALID_HANDLE_VALUE ;
         HANDLE hDstFile = INVALID_HANDLE_VALUE ;
         DWORD dwError(0) ;
@@ -250,6 +276,8 @@ void CgzipToolsDlg::OnBnClickedUncompress()
         PBYTE pSrcBuffer(NULL), pDstBuffer(NULL) ;
         DWORD dwNumberOfBytesRead(0) ;
         DWORD dwNumberOfBytesWritten(0);
+        int nResult(-1) ;
+        BOOL bWriteFileRresult(false) ;
 
         __try
         {
@@ -260,11 +288,20 @@ void CgzipToolsDlg::OnBnClickedUncompress()
                                                         OPEN_EXISTING,
                                                         FILE_ATTRIBUTE_NORMAL,
                                                         NULL) ;
+
                 if (INVALID_HANDLE_VALUE == hSrcFile)
                 {
                         dwError = GetLastError() ;
                         OutputDebugString(TEXT("create srcfile failed!\r\n")) ;
                         __leave ;
+                }
+
+                // 如果没有指定目标路径，自己生成一个
+                if (m_strDstPath.GetLength() == 0)
+                {
+                        m_strDstPath = m_strSrcPath ;
+                        m_strDstPath += TEXT(".out") ;
+                        UpdateData(FALSE) ;
                 }
 
                 hDstFile = CreateFile(m_strDstPath.GetBuffer(0),
@@ -274,6 +311,7 @@ void CgzipToolsDlg::OnBnClickedUncompress()
                                                         OPEN_ALWAYS,
                                                         FILE_ATTRIBUTE_NORMAL,
                                                         NULL) ;
+
                 if (INVALID_HANDLE_VALUE == hDstFile)
                 {
                         dwError = GetLastError() ;
@@ -298,21 +336,52 @@ void CgzipToolsDlg::OnBnClickedUncompress()
                         __leave ;
                 }
 
-                dwNeedBufSize = dwFileSize * 8 ;
+                // bMode为true的话为解压模式，给大一点的空间
+                // 其实压缩的话，内存的需求会更少的
+                dwNeedBufSize = dwFileSize * (bMode?8:2) ;
                 pDstBuffer = new Byte[dwNeedBufSize] ;
 
-                if(-1 != httpgzdecompress(pSrcBuffer, dwFileSize, pDstBuffer, &dwNeedBufSize))
+                if (bMode)
                 {
-                        if( WriteFile(hDstFile, pDstBuffer, dwNeedBufSize, &dwNumberOfBytesWritten, NULL)
-                                && dwNumberOfBytesWritten == dwNeedBufSize)
-                        {
-                                MessageBox(TEXT("解压成功并成功写入文件!"), TEXT("Tips"),MB_OK) ;
-                        }
-                        else
-                        {
-                                MessageBox(TEXT("解压成功但是写入文件失败!"), TEXT("Tips"),  MB_OK) ;
-                        }
+                        nResult = httpgzdecompress(pSrcBuffer,
+                                                                        dwFileSize,
+                                                                        pDstBuffer,
+                                                                        &dwNeedBufSize) ;
                 }
+                else
+                {
+                        nResult = gzcompress(pSrcBuffer,
+                                                                dwFileSize,
+                                                                pDstBuffer,
+                                                                &dwNeedBufSize) ;
+                }
+                
+                if (-1 != nResult)
+                {
+                        bWriteFileRresult = WriteFile(hDstFile,
+                                                                                pDstBuffer,
+                                                                                dwNeedBufSize,
+                                                                                &dwNumberOfBytesWritten, 
+                                                                                NULL) ;
+                }
+                else
+                {
+                        m_StatusBar.SetText(bMode?TEXT("解压数据出错"):TEXT("压缩数据出错"),1,0) ;
+                        __leave ;
+                }
+
+                // 写入文件成功
+                if (bWriteFileRresult && dwNumberOfBytesWritten == dwNeedBufSize)
+                {
+                        m_StatusBar.SetText(bMode?TEXT("解压数据成功并成功写入文件")
+                                                                         :TEXT("压缩数据成功并成功写入文件"),1,0) ;
+                }
+                else
+                {
+                        m_StatusBar.SetText(bMode?TEXT("解压数据成功但是写入文件失败")
+                                                                         :TEXT("压缩数据成功但是写入文件失败"),1,0) ;
+                }
+                
         }
 
         __finally
@@ -342,4 +411,5 @@ void CgzipToolsDlg::OnBnClickedUncompress()
                 }
         }
 
+        return nResult ;
 }

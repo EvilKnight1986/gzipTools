@@ -34,6 +34,7 @@ private:
         CString m_strSrcPath;
         // 目标文件路径
         CString m_strDstPath;
+        CStatusBarCtrl m_StatusBar; // 状态栏
 protected:
         virtual void OnCancel();
         virtual void OnOK();
@@ -43,4 +44,5 @@ public:
         afx_msg void OnBnClickedDstbrow();
         afx_msg void OnBnClickedCompress();
         afx_msg void OnBnClickedUncompress();
+        int gzipStream(bool bMode);
 };
